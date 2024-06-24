@@ -43,11 +43,11 @@ import numpy as np
 import wandb
 import torch.nn as nn
 import sys
-
+from torch.optim import AdamW
 import numpy as np
 import sys
 from tqdm import tqdm
-
+from collections import Counter
 wandb.init(project="active_learning_server")
 plt.style.use('ggplot')
 
@@ -58,6 +58,10 @@ torch.cuda.manual_seed_all(seed)
 
 torch.backends.cuda.matmul.allow_tf32 = True
 print("TF32 is enabled:", torch.backends.cuda.matmul.allow_tf32)
+#class_labels = ["crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches"]
+class_labels = [
+    '__background__', 'crazing', 'inclusion', 'patches', 'pitted_surface', 'rolled-in_scale', 'scratches'
+]
 
 # Function for running training iterations.
 def train(train_data_loader, model):
@@ -211,6 +215,7 @@ def mc_dropout_ssd(data_loader, model, forward_passes):
 
 
 
+
 # Assuming you have a data_loader, model, and DEVICE set up
 # entropy = mc_dropout_ssd(valid_loader, model, forward_passes=15)
 
@@ -239,10 +244,10 @@ class CustomSampler(Sampler):
 if __name__ == '__main__':
     os.makedirs('outputs', exist_ok=True)
     torch.set_float32_matmul_precision('high')
-    train_dataset = create_train_dataset(TRAIN_DIR)
-    valid_dataset = create_valid_dataset(VALID_DIR)   
+    train_dataset = create_train_dataset(TRAIN_DIR)     # createing a pool of traing data
+    valid_dataset = create_valid_dataset(VALID_DIR)     # creating a pool of validation dataset
     #train_loader = create_train_loader(train_dataset, NUM_WORKERS)
-    valid_loader = create_valid_loader(valid_dataset, NUM_WORKERS)
+    valid_loader = create_valid_loader(valid_dataset, NUM_WORKERS)     # validation loader
     print(f"Number of training samples: {len(train_dataset)}")
     print(f"Number of validation samples: {len(valid_dataset)}\n")
     
@@ -259,9 +264,14 @@ if __name__ == '__main__':
         p.numel() for p in model.parameters() if p.requires_grad)
     print(f"{total_trainable_params:,} training parameters.")
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.SGD(
-        params, lr=0.0001, momentum=0.9, nesterov=True
-    )
+    # optimizer = torch.optim.SGD(
+    #     params, lr=0.0001, momentum=0.9, nesterov=True     # actual used for SSD
+    # )
+
+
+    optimizer = AdamW(params, lr=0.001, weight_decay=0.0005)   # from tolov5 paper on Nih by Yongping
+
+
     scheduler = MultiStepLR(
         optimizer=optimizer, milestones=[45], gamma=0.1, verbose=True
     )
@@ -286,23 +296,40 @@ if __name__ == '__main__':
 
     # We select 100 random images to label
     total_images = len(train_dataset)  # this is 1600
-    num_images_to_label = 100
+    num_images_to_label = 500
 
     label_indices = list(np.random.choice(total_images, num_images_to_label, replace=False))
-    np.save('label_indices.npy', label_indices)
+    np.save('label_indices.npy', label_indices)     
+    # THe length of label_indices is 500
 
     #remainig indices
     all_indices = list(range(total_images))
     all_indices = list(set(all_indices))
     remaining_indices = [idx for idx in all_indices if idx not in label_indices]
     remaining_indices = list(set(remaining_indices))
+    # THe length of remaining_indices is total_images minus the length of label_indices
+
+    sampled_class_labels = []
+    for idx in label_indices:
+        _, target = train_dataset[idx]
+        sampled_class_labels.extend(target['labels'].numpy())
+
+    sampled_class_labels = Counter(sampled_class_labels)
+    print("Class distribution of sampled images:")
+
+    for class_idx, count in sampled_class_labels.items():
+        class_name = class_labels[class_idx]
+        print(f"{class_name}: {count}")
 
     entropy_indices = []
+    least_entropy_indices = []
+
 
     for epoch in range(NUM_EPOCHS):
         print(f"\nEPOCH {epoch+1} of {NUM_EPOCHS}")
 
         label_indices += entropy_indices
+        label_indices += least_entropy_indices
         #print(f"length of label_indices is {len(label_indices)}")
         label_indices = list(set(label_indices))
         # print(f"length of label_indices after duplicate removeal is {len(label_indices)}")
@@ -311,6 +338,22 @@ if __name__ == '__main__':
         # print(f"Length of entropy_indices in epoch {epoch+1} is {len(entropy_indices)}")
         custom_sampler_label_indices = CustomSampler(label_indices)
         label_indices_loader = create_train_loader(train_dataset, sampler=custom_sampler_label_indices)
+
+        sampled_class_labels_1 = []
+        for idx in custom_sampler_label_indices:
+            _, target = train_dataset[idx]
+            sampled_class_labels_1.extend(target['labels'].numpy())
+
+        sampled_class_labels_1 = Counter(sampled_class_labels_1)
+        print("Class distribution of sampled images:")
+
+        for class_idx, count in sampled_class_labels_1.items():
+            class_name = class_labels[class_idx]
+            print(f"{class_name}: {count}")
+
+
+
+
 
         remaining_indices_before = len(remaining_indices)
         #print(f"Length of remaining_indices before in epoch {epoch+1} is {remaining_indices_before}")
@@ -342,7 +385,7 @@ if __name__ == '__main__':
         end_mc = time.time()
         metric_summary, class_map = validate(valid_loader, model)
 
-        class_labels = ["crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches"]
+        class_labels = class_labels
         table = wandb.Table(columns=["class", "mAP"])
         class_map = class_map.tolist()
         # Add data to the table
@@ -373,9 +416,27 @@ if __name__ == '__main__':
         # Save mAP plot.
         save_mAP(OUT_DIR, map_50_list, map_list)
         scheduler.step()
+
+
         wandb.log({"train_loss": train_loss_hist.value, "mAP_50": metric_summary['map_50'], "mAP": metric_summary['map'], 
                    "epoch": epoch, "AL_time": ((end_al - start_al) / 60), "MC_time": ((end_mc - start_mc) / 60), "class_map" : table,
-                   "label_indices": len(label_indices), "remaining_indices": len(remaining_indices)})
+                   "label_indices": len(label_indices), "remaining_indices": len(remaining_indices), "lr": optimizer.param_groups[0]['lr']})
+
+
+
+        wandb.log({
+            "train_loss": train_loss_hist.value,
+            "mAP_50": metric_summary['map_50'],
+            "mAP": metric_summary['map'],
+            "epoch": Active_learning_epochs,
+            "AL_time": ((end_al - start_al) / 60),
+            "MC_time": ((end_mc - start_mc) / 60),
+            "class_map": table,
+            "label_indices": len(label_indices),
+            "remaining_indices": len(remaining_indices),
+            "lr": optimizer.param_groups[0]['lr']  # Include LR here
+        }, step=epoch)
+
 
         if len(entropy) >= 10:
 
@@ -385,3 +446,16 @@ if __name__ == '__main__':
 
         entropy_indices = [index for index, _ in top_entropy]
         entropy_indices = list(set(entropy_indices))
+
+
+        if len(entropy) >= 10:
+
+            least_entropy = entropy[-10:] # Take the last 10 elements
+        else:
+            least_entropy = entropy  # Take all elements if less than 20
+
+        least_entropy_indices = [index for index, _ in least_entropy]
+        least_entropy_indices = list(set(least_entropy_indices))
+
+
+    wandb.finish()
