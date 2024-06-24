@@ -15,7 +15,7 @@ from config import (
     Active_learning_epochs,
     FORWARD_PASSES
 )
-from model import create_model, create_model_with_dropout
+from model import create_model, create_model_with_dropout, reset_weights
 from custom_utils import (
     Averager, 
     SaveBestModel, 
@@ -48,6 +48,9 @@ import numpy as np
 import sys
 from tqdm import tqdm
 from collections import Counter
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+
 wandb.init(project="active_learning_server")
 plt.style.use('ggplot')
 
@@ -243,7 +246,7 @@ class CustomSampler(Sampler):
 
 if __name__ == '__main__':
     os.makedirs('outputs', exist_ok=True)
-    torch.set_float32_matmul_precision('high')
+    #torch.set_float32_matmul_precision('high')
     train_dataset = create_train_dataset(TRAIN_DIR)     # createing a pool of traing data
     valid_dataset = create_valid_dataset(VALID_DIR)     # creating a pool of validation dataset
     #train_loader = create_train_loader(train_dataset, NUM_WORKERS)
@@ -269,12 +272,14 @@ if __name__ == '__main__':
     # )
 
 
-    optimizer = AdamW(params, lr=0.001, weight_decay=0.0005)   # from tolov5 paper on Nih by Yongping
+    optimizer = AdamW(params, lr=0.002, weight_decay=0.0004)   # from yolov5 paper on Nih by Yongping
 
 
-    scheduler = MultiStepLR(
-        optimizer=optimizer, milestones=[45], gamma=0.1, verbose=True
-    )
+    # scheduler = MultiStepLR(
+    #     optimizer=optimizer, milestones=[15], gamma=0.1, verbose=True
+    # )
+
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0)
 
     # To monitor training loss
     train_loss_hist = Averager()
@@ -308,6 +313,7 @@ if __name__ == '__main__':
     remaining_indices = [idx for idx in all_indices if idx not in label_indices]
     remaining_indices = list(set(remaining_indices))
     # THe length of remaining_indices is total_images minus the length of label_indices
+    print(f"Length of remaining_indices is {len(remaining_indices)}")
 
     sampled_class_labels = []
     for idx in label_indices:
@@ -315,7 +321,7 @@ if __name__ == '__main__':
         sampled_class_labels.extend(target['labels'].numpy())
 
     sampled_class_labels = Counter(sampled_class_labels)
-    print("Class distribution of sampled images:")
+    print("Starting Class distribution of sampled images:", len(sampled_class_labels))
 
     for class_idx, count in sampled_class_labels.items():
         class_name = class_labels[class_idx]
@@ -333,8 +339,8 @@ if __name__ == '__main__':
         #print(f"length of label_indices is {len(label_indices)}")
         label_indices = list(set(label_indices))
         # print(f"length of label_indices after duplicate removeal is {len(label_indices)}")
-        # print(f"length of entropy_indices is {len(entropy_indices)}")
-        # print(f"Length of label_indices in epoch {epoch+1} is {len(label_indices)}")
+        print(f"length of entropy_indices is {len(entropy_indices)}")
+        print(f"Length of label_indices in epoch {epoch+1} is {len(label_indices)}")
         # print(f"Length of entropy_indices in epoch {epoch+1} is {len(entropy_indices)}")
         custom_sampler_label_indices = CustomSampler(label_indices)
         label_indices_loader = create_train_loader(train_dataset, sampler=custom_sampler_label_indices)
@@ -345,7 +351,7 @@ if __name__ == '__main__':
             sampled_class_labels_1.extend(target['labels'].numpy())
 
         sampled_class_labels_1 = Counter(sampled_class_labels_1)
-        print("Class distribution of sampled images:")
+        print("Class distribution of sampled images inside the loop:")
 
         for class_idx, count in sampled_class_labels_1.items():
             class_name = class_labels[class_idx]
@@ -456,6 +462,8 @@ if __name__ == '__main__':
 
         least_entropy_indices = [index for index, _ in least_entropy]
         least_entropy_indices = list(set(least_entropy_indices))
+
+        #model.apply(reset_weights)
 
 
     wandb.finish()

@@ -91,6 +91,11 @@ def create_model_with_dropout(num_classes=91, size=300, nms=0.45, dropout_rate=0
     )
     return model
 
+def reset_weights(m):
+    for layer in m.children():
+        if hasattr(layer, 'reset_parameters'):
+            layer.reset_parameters()
+
 
 if __name__ == '__main__':
     model = create_model(2, 300)

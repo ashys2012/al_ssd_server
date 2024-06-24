@@ -3,11 +3,11 @@ import torch
 BATCH_SIZE = 64 # Increase / decrease according to GPU memeory.
 RESIZE_TO = 300 # Resize the image for training and transforms.
 NUM_EPOCHS = 100 # Number of epochs to train for.
-NUM_WORKERS = 12 # Number of parallel workers for data loading.
-Active_learning_epochs = 20
-FORWARD_PASSES = 3
+NUM_WORKERS = 16 # Number of parallel workers for data loading.
+Active_learning_epochs = 50
+FORWARD_PASSES = 4
 
-DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+DEVICE = torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu')
 
 # Training images and XML files directory.
 TRAIN_DIR = '/mnt/sdb/2024/ssd/data/Train/train'
@@ -25,4 +25,4 @@ NUM_CLASSES = len(CLASSES)
 VISUALIZE_TRANSFORMED_IMAGES = False
 
 # Location to save model and plots.
-OUT_DIR = '/mnt/sdb/2024/ssd/outputs'
+OUT_DIR = '/mnt/sdb/2024/ssd/outputs/cosine_now_w_reset'
