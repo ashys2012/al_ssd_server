@@ -13,7 +13,9 @@ from config import (
     VALID_DIR,
     TRAIN_DIR,
     Active_learning_epochs,
-    FORWARD_PASSES
+    FORWARD_PASSES,
+    top_N,
+    least_N
 )
 from model import create_model, create_model_with_dropout, reset_weights
 from custom_utils import (
@@ -61,10 +63,10 @@ torch.cuda.manual_seed_all(seed)
 
 torch.backends.cuda.matmul.allow_tf32 = True
 print("TF32 is enabled:", torch.backends.cuda.matmul.allow_tf32)
-#class_labels = ["crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches"]
-class_labels = [
-    '__background__', 'crazing', 'inclusion', 'patches', 'pitted_surface', 'rolled-in_scale', 'scratches'
-]
+class_labels = ["crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches", "background"]
+# class_labels = [
+#     '__background__', 'crazing', 'inclusion', 'patches', 'pitted_surface', 'rolled-in_scale', 'scratches'
+# ]   this only outputs 6 classes with background
 
 # Function for running training iterations.
 def train(train_data_loader, model):
@@ -214,6 +216,8 @@ def mc_dropout_ssd(data_loader, model, forward_passes):
     # Sort entropies from highest to lowest
     entropies_per_image_sorted = sorted(entropies_per_image, key=lambda x: x[1], reverse=True)
 
+    print("The lenght of total entropies", len(entropies_per_image_sorted))
+
     return entropies_per_image_sorted
 
 
@@ -238,7 +242,7 @@ class CustomSampler(Sampler):
         self.indices = indices
 
     def __iter__(self):
-        return iter(self.indices)
+        return iter(self.indices[i] for i in range(len(self.indices)))
     
     def __len__(self):
         return len(self.indices)
@@ -256,7 +260,7 @@ if __name__ == '__main__':
     
 
     # Initialize the model and move to the computation device.
-    model = create_model_with_dropout(num_classes=NUM_CLASSES, size=RESIZE_TO, dropout_rate=0.3)
+    model = create_model_with_dropout(num_classes=NUM_CLASSES, size=RESIZE_TO)#, dropout_rate=0.3)
     model = model.to(DEVICE)
     #model = torch.compile(model)
     #print(model)
@@ -275,11 +279,11 @@ if __name__ == '__main__':
     optimizer = AdamW(params, lr=0.002, weight_decay=0.0004)   # from yolov5 paper on Nih by Yongping
 
 
-    # scheduler = MultiStepLR(
-    #     optimizer=optimizer, milestones=[15], gamma=0.1, verbose=True
-    # )
+    scheduler = MultiStepLR(
+        optimizer=optimizer, milestones=[15], gamma=0.1, verbose=True
+    )
 
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0)
+    #scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0)
 
     # To monitor training loss
     train_loss_hist = Averager()
@@ -301,17 +305,16 @@ if __name__ == '__main__':
 
     # We select 100 random images to label
     total_images = len(train_dataset)  # this is 1600
-    num_images_to_label = 500
+    num_images_to_label = 400
 
     label_indices = list(np.random.choice(total_images, num_images_to_label, replace=False))
     np.save('label_indices.npy', label_indices)     
     # THe length of label_indices is 500
 
     #remainig indices
-    all_indices = list(range(total_images))
-    all_indices = list(set(all_indices))
-    remaining_indices = [idx for idx in all_indices if idx not in label_indices]
-    remaining_indices = list(set(remaining_indices))
+    all_indices = set(range(total_images))
+    remaining_indices = list(all_indices - set(label_indices))
+    
     # THe length of remaining_indices is total_images minus the length of label_indices
     print(f"Length of remaining_indices is {len(remaining_indices)}")
 
@@ -327,23 +330,27 @@ if __name__ == '__main__':
         class_name = class_labels[class_idx]
         print(f"{class_name}: {count}")
 
-    entropy_indices = []
-    least_entropy_indices = []
+
+    new_indices_to_add = []
 
 
     for epoch in range(NUM_EPOCHS):
         print(f"\nEPOCH {epoch+1} of {NUM_EPOCHS}")
 
-        label_indices += entropy_indices
-        label_indices += least_entropy_indices
-        #print(f"length of label_indices is {len(label_indices)}")
+
+        # Add the new indices to the existing label_indices
+        label_indices.extend(new_indices_to_add)
+
+        # Ensure the indices are unique
         label_indices = list(set(label_indices))
+
+
         # print(f"length of label_indices after duplicate removeal is {len(label_indices)}")
-        print(f"length of entropy_indices is {len(entropy_indices)}")
+        print(f"length of entropy_indices is {len(new_indices_to_add)}")
         print(f"Length of label_indices in epoch {epoch+1} is {len(label_indices)}")
         # print(f"Length of entropy_indices in epoch {epoch+1} is {len(entropy_indices)}")
         custom_sampler_label_indices = CustomSampler(label_indices)
-        label_indices_loader = create_train_loader(train_dataset, sampler=custom_sampler_label_indices)
+        label_indices_loader = create_train_loader(train_dataset , sampler=custom_sampler_label_indices)
 
         sampled_class_labels_1 = []
         for idx in custom_sampler_label_indices:
@@ -361,16 +368,11 @@ if __name__ == '__main__':
 
 
 
+        # Step 5: Update remaining_indices by removing the new additions
         remaining_indices_before = len(remaining_indices)
-        #print(f"Length of remaining_indices before in epoch {epoch+1} is {remaining_indices_before}")
-        remaining_indices = list(set(remaining_indices))
-        #remaing indices
-        #remaining_indices = [idx for idx in all_indices if idx not in label_indices]   # all_indices - label_indices
-        #print(f"Length of remaining_indices between -------- in epoch {epoch+1} is {len(remaining_indices)}")
-        remaining_indices = [idx for idx in remaining_indices if idx not in label_indices]
-        #print(f"Length of remaining_indices in epoch {epoch+1} is {len(remaining_indices)}")
+        remaining_indices = list(all_indices - set(label_indices))
         removed_indices = remaining_indices_before - len(remaining_indices)
-        #print(f"remaining indices removed in epoch {epoch+1} is {removed_indices}")
+        print(f"Remaining indices removed in epoch {epoch} is {removed_indices}")
         custom_sampler_remaining_indices = CustomSampler(remaining_indices)
         remaining_indices_loader = create_train_loader(train_dataset, sampler=custom_sampler_remaining_indices)
 
@@ -385,85 +387,103 @@ if __name__ == '__main__':
             start_al = time.time()
             train_loss = train(label_indices_loader, model)
             end_al = time.time()
+            #metric_summary, class_map = validate(valid_loader, model)
 
+            metric_summary, class_map = validate(valid_loader, model)
+
+            class_labels = class_labels
+            table = wandb.Table(columns=["class", "mAP"])
+            class_map = class_map.tolist()
+            # Add data to the table
+            for label, map_value in zip(class_labels, class_map):
+                table.add_data(label, map_value)
+
+            print(f"Epoch #{epoch+1} train loss: {train_loss_hist.value:.3f}")   
+            print(f"Epoch #{epoch+1} mAP@0.50:0.95: {metric_summary['map']}")
+            print(f"Epoch #{epoch+1} mAP@0.50: {metric_summary['map_50']}")
+            #print("Entropy of predictions:", entropy, "\n")
+            #print(f"length of entropy is {len(entropy)}")
+            #print(f"Took {((end - start) / 60):.3f} minutes for epoch {epoch}")
+
+            train_loss_list.append(train_loss)
+            map_50_list.append(metric_summary['map_50'])
+            map_list.append(metric_summary['map'])
+
+            # save the best model till now.
+            save_best_model(
+                model, float(metric_summary['map']), epoch, 'outputs'
+            )
+            # Save the current epoch model.
+            save_model(epoch, model, optimizer)
+
+            # Save loss plot.
+            save_loss_plot(OUT_DIR, train_loss_list)
+
+            # Save mAP plot.
+            save_mAP(OUT_DIR, map_50_list, map_list)
+            scheduler.step()
+
+
+            wandb.log({"train_loss": train_loss_hist.value, "mAP_50": metric_summary['map_50'], "mAP": metric_summary['map'], 
+                    "epoch": epoch, "AL_time": ((end_al - start_al) / 60), 
+                    #"MC_time": ((end_mc - start_mc) / 60), 
+                    "class_map" : table,
+                    "label_indices": len(label_indices), "remaining_indices": len(remaining_indices), "lr": optimizer.param_groups[0]['lr']})
+
+
+
+            wandb.log({
+                "train_loss": train_loss_hist.value,
+                "mAP_50": metric_summary['map_50'],
+                "mAP": metric_summary['map'],
+                "epoch": Active_learning_epochs,
+                "AL_time": ((end_al - start_al) / 60),
+                #"MC_time": ((end_mc - start_mc) / 60),
+                "class_map": table,
+                "label_indices": len(label_indices),
+                "remaining_indices": len(remaining_indices),
+                "lr": optimizer.param_groups[0]['lr']  # Include LR here
+            }, step=epoch)
+
+
+        # Number of images to select for top and least uncertainty
+        top_N = top_N
+        least_N = least_N
         start_mc = time.time()    
-        entropy = mc_dropout_ssd(remaining_indices_loader, model, forward_passes=FORWARD_PASSES)
+        entropies_per_image_sorted = mc_dropout_ssd(remaining_indices_loader, model, forward_passes=FORWARD_PASSES)
         end_mc = time.time()
-        metric_summary, class_map = validate(valid_loader, model)
 
-        class_labels = class_labels
-        table = wandb.Table(columns=["class", "mAP"])
-        class_map = class_map.tolist()
-        # Add data to the table
-        for label, map_value in zip(class_labels, class_map):
-            table.add_data(label, map_value)
+        # Assuming `entropies_per_image_sorted` is a list of tuples (index, entropy)
 
-        print(f"Epoch #{epoch+1} train loss: {train_loss_hist.value:.3f}")   
-        print(f"Epoch #{epoch+1} mAP@0.50:0.95: {metric_summary['map']}")
-        print(f"Epoch #{epoch+1} mAP@0.50: {metric_summary['map_50']}")
-        #print("Entropy of predictions:", entropy, "\n")
-        #print(f"length of entropy is {len(entropy)}")
-        #print(f"Took {((end - start) / 60):.3f} minutes for epoch {epoch}")
-
-        train_loss_list.append(train_loss)
-        map_50_list.append(metric_summary['map_50'])
-        map_list.append(metric_summary['map'])
-
-        # save the best model till now.
-        save_best_model(
-            model, float(metric_summary['map']), epoch, 'outputs'
-        )
-        # Save the current epoch model.
-        save_model(epoch, model, optimizer)
-
-        # Save loss plot.
-        save_loss_plot(OUT_DIR, train_loss_list)
-
-        # Save mAP plot.
-        save_mAP(OUT_DIR, map_50_list, map_list)
-        scheduler.step()
-
-
-        wandb.log({"train_loss": train_loss_hist.value, "mAP_50": metric_summary['map_50'], "mAP": metric_summary['map'], 
-                   "epoch": epoch, "AL_time": ((end_al - start_al) / 60), "MC_time": ((end_mc - start_mc) / 60), "class_map" : table,
-                   "label_indices": len(label_indices), "remaining_indices": len(remaining_indices), "lr": optimizer.param_groups[0]['lr']})
-
-
-
-        wandb.log({
-            "train_loss": train_loss_hist.value,
-            "mAP_50": metric_summary['map_50'],
-            "mAP": metric_summary['map'],
-            "epoch": Active_learning_epochs,
-            "AL_time": ((end_al - start_al) / 60),
-            "MC_time": ((end_mc - start_mc) / 60),
-            "class_map": table,
-            "label_indices": len(label_indices),
-            "remaining_indices": len(remaining_indices),
-            "lr": optimizer.param_groups[0]['lr']  # Include LR here
-        }, step=epoch)
-
-
-        if len(entropy) >= 10:
-
-            top_entropy = entropy[:10]
+        # Print Top N Entropy Values and Indices
+        if len(entropies_per_image_sorted) >= top_N:
+            top_entropy = entropies_per_image_sorted[:top_N]
         else:
-            top_entropy = entropy  # Take all elements if less than 20
+            top_entropy = entropies_per_image_sorted
 
-        entropy_indices = [index for index, _ in top_entropy]
-        entropy_indices = list(set(entropy_indices))
+        # print("Top Entropy Image Indices and Values:")
+        # for index, entropy in top_entropy:
+        #     print(f"Index: {index}, Entropy: {entropy}")
 
-
-        if len(entropy) >= 10:
-
-            least_entropy = entropy[-10:] # Take the last 10 elements
+        # Print Least N Entropy Values and Indices
+        if len(entropies_per_image_sorted) >= least_N:
+            least_entropy = entropies_per_image_sorted[-least_N:]
         else:
-            least_entropy = entropy  # Take all elements if less than 20
+            least_entropy = entropies_per_image_sorted
 
+        # print("Least Entropy Image Indices and Values:")
+        # for index, entropy in least_entropy:
+        #     print(f"Index: {index}, Entropy: {entropy}")
+
+        # Extract the indices separately if needed
+        top_entropy_indices = [index for index, _ in top_entropy]
         least_entropy_indices = [index for index, _ in least_entropy]
-        least_entropy_indices = list(set(least_entropy_indices))
 
-        #model.apply(reset_weights)
+
+        # Reset model weights (assuming reset_weights is a defined function)
+        model.apply(reset_weights)
+
+        new_indices_to_add = list(set(top_entropy_indices + least_entropy_indices))
 
 
     wandb.finish()
