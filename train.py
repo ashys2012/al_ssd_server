@@ -15,7 +15,8 @@ from config import (
     Active_learning_epochs,
     FORWARD_PASSES,
     top_N,
-    least_N
+    least_N,
+    labelled_sample
 )
 from model import create_model, create_model_with_dropout, reset_weights
 from custom_utils import (
@@ -63,7 +64,7 @@ torch.cuda.manual_seed_all(seed)
 
 torch.backends.cuda.matmul.allow_tf32 = True
 print("TF32 is enabled:", torch.backends.cuda.matmul.allow_tf32)
-class_labels = ["crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches", "background"]
+class_labels = ["background", "crazing", "inclusion", "patches", "pitted_surface", "rolled-in_scale", "scratches"]
 # class_labels = [
 #     '__background__', 'crazing', 'inclusion', 'patches', 'pitted_surface', 'rolled-in_scale', 'scratches'
 # ]   this only outputs 6 classes with background
@@ -82,8 +83,8 @@ def train(train_data_loader, model):
         
         images = list(image.to(DEVICE) for image in images)
         targets = [{k: v.to(DEVICE) for k, v in t.items()} for t in targets]
-        with torch.cuda.amp.autocast(enabled=True, dtype=torch.float32):
-            loss_dict = model(images, targets) 
+        #with torch.cuda.amp.autocast(enabled=True, dtype=torch.float32):
+        loss_dict = model(images, targets) 
         # print("loss_dict: ", loss_dict)
         # print("loss_dict.values(): ", loss_dict.values())
         # print("shape of loss_dict.values(): ", len(loss_dict.values()))
@@ -95,7 +96,7 @@ def train(train_data_loader, model):
 
         losses.backward()
         optimizer.step()
-        torch.cuda.synchronize()    # wait for GPU to finish working
+        #torch.cuda.synchronize()    # wait for GPU to finish working
     
         # update the loss value beside the progress bar for each iteration
         prog_bar.set_description(desc=f"Loss: {loss_value:.4f}")
@@ -260,7 +261,7 @@ if __name__ == '__main__':
     
 
     # Initialize the model and move to the computation device.
-    model = create_model_with_dropout(num_classes=NUM_CLASSES, size=RESIZE_TO)#, dropout_rate=0.3)
+    model = create_model(num_classes=NUM_CLASSES, size=RESIZE_TO)#, dropout_rate=0.3)
     model = model.to(DEVICE)
     #model = torch.compile(model)
     #print(model)
@@ -305,7 +306,7 @@ if __name__ == '__main__':
 
     # We select 100 random images to label
     total_images = len(train_dataset)  # this is 1600
-    num_images_to_label = 400
+    num_images_to_label = labelled_sample
 
     label_indices = list(np.random.choice(total_images, num_images_to_label, replace=False))
     np.save('label_indices.npy', label_indices)     
@@ -387,71 +388,72 @@ if __name__ == '__main__':
             start_al = time.time()
             train_loss = train(label_indices_loader, model)
             end_al = time.time()
-            #metric_summary, class_map = validate(valid_loader, model)
-
-            metric_summary, class_map = validate(valid_loader, model)
-
-            class_labels = class_labels
-            table = wandb.Table(columns=["class", "mAP"])
-            class_map = class_map.tolist()
-            # Add data to the table
-            for label, map_value in zip(class_labels, class_map):
-                table.add_data(label, map_value)
-
-            print(f"Epoch #{epoch+1} train loss: {train_loss_hist.value:.3f}")   
-            print(f"Epoch #{epoch+1} mAP@0.50:0.95: {metric_summary['map']}")
-            print(f"Epoch #{epoch+1} mAP@0.50: {metric_summary['map_50']}")
-            #print("Entropy of predictions:", entropy, "\n")
-            #print(f"length of entropy is {len(entropy)}")
-            #print(f"Took {((end - start) / 60):.3f} minutes for epoch {epoch}")
-
-            train_loss_list.append(train_loss)
-            map_50_list.append(metric_summary['map_50'])
-            map_list.append(metric_summary['map'])
-
-            # save the best model till now.
-            save_best_model(
-                model, float(metric_summary['map']), epoch, 'outputs'
-            )
-            # Save the current epoch model.
-            save_model(epoch, model, optimizer)
-
-            # Save loss plot.
-            save_loss_plot(OUT_DIR, train_loss_list)
-
-            # Save mAP plot.
-            save_mAP(OUT_DIR, map_50_list, map_list)
-            scheduler.step()
-
-
-            wandb.log({"train_loss": train_loss_hist.value, "mAP_50": metric_summary['map_50'], "mAP": metric_summary['map'], 
-                    "epoch": epoch, "AL_time": ((end_al - start_al) / 60), 
-                    #"MC_time": ((end_mc - start_mc) / 60), 
-                    "class_map" : table,
-                    "label_indices": len(label_indices), "remaining_indices": len(remaining_indices), "lr": optimizer.param_groups[0]['lr']})
 
 
 
-            wandb.log({
-                "train_loss": train_loss_hist.value,
-                "mAP_50": metric_summary['map_50'],
-                "mAP": metric_summary['map'],
-                "epoch": Active_learning_epochs,
-                "AL_time": ((end_al - start_al) / 60),
-                #"MC_time": ((end_mc - start_mc) / 60),
-                "class_map": table,
-                "label_indices": len(label_indices),
-                "remaining_indices": len(remaining_indices),
-                "lr": optimizer.param_groups[0]['lr']  # Include LR here
-            }, step=epoch)
+        metric_summary, class_map = validate(valid_loader, model)
+
+        class_labels = class_labels
+        table = wandb.Table(columns=["class", "mAP"])
+        class_map = class_map.tolist()
+        # Add data to the table
+        for label, map_value in zip(class_labels, class_map):
+            table.add_data(label, map_value)
+
+        print(f"Epoch #{epoch+1} train loss: {train_loss_hist.value:.3f}")   
+        print(f"Epoch #{epoch+1} mAP@0.50:0.95: {metric_summary['map']}")
+        print(f"Epoch #{epoch+1} mAP@0.50: {metric_summary['map_50']}")
+        #print("Entropy of predictions:", entropy, "\n")
+        #print(f"length of entropy is {len(entropy)}")
+        #print(f"Took {((end - start) / 60):.3f} minutes for epoch {epoch}")
+
+        train_loss_list.append(train_loss)
+        map_50_list.append(metric_summary['map_50'])
+        map_list.append(metric_summary['map'])
+
+        # save the best model till now.
+        save_best_model(
+            model, float(metric_summary['map']), epoch, 'outputs'
+        )
+        # Save the current epoch model.
+        save_model(epoch, model, optimizer)
+
+        # Save loss plot.
+        save_loss_plot(OUT_DIR, train_loss_list)
+
+        # Save mAP plot.
+        save_mAP(OUT_DIR, map_50_list, map_list)
+        scheduler.step()
+        start_mc = time.time()    
+        entropies_per_image_sorted = mc_dropout_ssd(remaining_indices_loader, model, forward_passes=FORWARD_PASSES)
+        end_mc = time.time()
+
+
+        wandb.log({"train_loss": train_loss_hist.value, "mAP_50": metric_summary['map_50'], "mAP": metric_summary['map'], 
+                   "epoch": Active_learning_epochs, "AL_time": ((end_al - start_al) / 60), 
+                   "MC_time": ((end_mc - start_mc) / 60), 
+                   "class_map" : table,
+                   "label_indices": len(label_indices), "remaining_indices": len(remaining_indices), "lr": optimizer.param_groups[0]['lr']})
+
+
+
+        wandb.log({
+            "train_loss": train_loss_hist.value,
+            "mAP_50": metric_summary['map_50'],
+            "mAP": metric_summary['map'],
+            "epoch": Active_learning_epochs,
+            "AL_time": ((end_al - start_al) / 60),
+            #"MC_time": ((end_mc - start_mc) / 60),
+            "class_map": table,
+            "label_indices": len(label_indices),
+            "remaining_indices": len(remaining_indices),
+            "lr": optimizer.param_groups[0]['lr']  # Include LR here
+        }, step=epoch)
 
 
         # Number of images to select for top and least uncertainty
         top_N = top_N
         least_N = least_N
-        start_mc = time.time()    
-        entropies_per_image_sorted = mc_dropout_ssd(remaining_indices_loader, model, forward_passes=FORWARD_PASSES)
-        end_mc = time.time()
 
         # Assuming `entropies_per_image_sorted` is a list of tuples (index, entropy)
 
@@ -461,9 +463,9 @@ if __name__ == '__main__':
         else:
             top_entropy = entropies_per_image_sorted
 
-        # print("Top Entropy Image Indices and Values:")
-        # for index, entropy in top_entropy:
-        #     print(f"Index: {index}, Entropy: {entropy}")
+        print("Top Entropy Image Indices and Values:")
+        for index, entropy in top_entropy:
+            print(f"Index: {index}, Entropy: {entropy}")
 
         # Print Least N Entropy Values and Indices
         if len(entropies_per_image_sorted) >= least_N:
@@ -471,9 +473,9 @@ if __name__ == '__main__':
         else:
             least_entropy = entropies_per_image_sorted
 
-        # print("Least Entropy Image Indices and Values:")
-        # for index, entropy in least_entropy:
-        #     print(f"Index: {index}, Entropy: {entropy}")
+        print("Least Entropy Image Indices and Values:")
+        for index, entropy in least_entropy:
+            print(f"Index: {index}, Entropy: {entropy}")
 
         # Extract the indices separately if needed
         top_entropy_indices = [index for index, _ in top_entropy]
@@ -481,7 +483,7 @@ if __name__ == '__main__':
 
 
         # Reset model weights (assuming reset_weights is a defined function)
-        model.apply(reset_weights)
+        #model.apply(reset_weights)
 
         new_indices_to_add = list(set(top_entropy_indices + least_entropy_indices))
 

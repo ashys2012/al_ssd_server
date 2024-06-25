@@ -8,6 +8,7 @@ Active_learning_epochs = 32
 FORWARD_PASSES = 16
 top_N = 50
 least_N = 50
+labelled_sample = 500
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
