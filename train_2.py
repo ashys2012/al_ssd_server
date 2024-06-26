@@ -1,6 +1,6 @@
 # the model we are using is create_model_with_dropout and was created in the server
 #this model has dropout layers in the resnet block
-
+#this file will contain the duplicates as set is removed
 
 from config import (
     DEVICE, 
@@ -344,8 +344,8 @@ if __name__ == '__main__':
     # THe length of label_indices is 500
 
     #remainig indices
-    all_indices = set(range(total_images))
-    remaining_indices = list(all_indices - set(label_indices))
+    all_indices = list(range(total_images))
+    remaining_indices = list(all_indices - label_indices)
     
     # THe length of remaining_indices is total_images minus the length of label_indices
     print(f"Length of remaining_indices is {len(remaining_indices)}")
@@ -382,7 +382,7 @@ if __name__ == '__main__':
         print(f"\nEPOCH {epoch+1} of {NUM_EPOCHS}")
 
         # Ensure the indices are unique
-        label_indices = list(set(label_indices))
+        label_indices = list(label_indices)
 
         print(f"Length of label_indices before is {len(label_indices)}")
         # Add the new indices to the existing label_indices
@@ -391,7 +391,7 @@ if __name__ == '__main__':
         print(f"Length of label_indices after is {len(label_indices)}" )
 
         # Ensure the indices are unique
-        label_indices = list(set(label_indices))
+        #label_indices = list(set(label_indices))
         print(f"Length of label_indices after is {len(label_indices)}" )
 
         print("--------------------------------------")
@@ -423,7 +423,7 @@ if __name__ == '__main__':
         # Step 5: Update remaining_indices by removing the new additions
         remaining_indices_before = len(remaining_indices)
         print(f"Length of remaining_indices before is {remaining_indices_before}")
-        remaining_indices = list(all_indices - set(label_indices))
+        remaining_indices = list(all_indices - label_indices)
         removed_indices = remaining_indices_before - len(remaining_indices)
         print(f"Remaining indices removed in epoch {epoch} is {removed_indices}")
         print(f"Length of remaining_indices in epoch after {epoch+1} is {len(remaining_indices)}")
