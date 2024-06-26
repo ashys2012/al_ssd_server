@@ -172,3 +172,37 @@ def save_mAP(OUT_DIR, map_05, map):
     ax.set_ylabel('mAP')
     ax.legend()
     figure.savefig(f"{OUT_DIR}/map.png")
+
+
+
+
+def check_duplicates(label_indices, remaining_indices):
+    """
+    Check for duplicates between the two lists of indices and print the common duplicates if any.
+    
+    Args:
+        label_indices (list): List of indices to check for duplicates.
+        remaining_indices (list): Another list of indices to check for duplicates.
+    
+    Returns:
+        dict: A dictionary containing the results of the duplicate check.
+    """
+    # Convert lists to sets to find common elements
+    label_indices_set = set(label_indices)
+    remaining_indices_set = set(remaining_indices)
+
+    # Find the intersection of the two sets to identify common elements
+    common_duplicates = label_indices_set.intersection(remaining_indices_set)
+
+    # Print results
+    if common_duplicates:
+        print(f"Common duplicates found between label_indices and remaining_indices: {list(common_duplicates)}")
+    else:
+        print("No common duplicates found between label_indices and remaining_indices.")
+
+    # Return the results for further use if needed
+    return {
+        'common_duplicates': list(common_duplicates),
+        'num_common_duplicates': len(common_duplicates)
+    }
+

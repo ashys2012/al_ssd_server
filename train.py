@@ -24,14 +24,16 @@ from custom_utils import (
     SaveBestModel, 
     save_model, 
     save_loss_plot,
-    save_mAP
+    save_mAP,
+    check_duplicates
 )
 from tqdm.auto import tqdm
 from datasets import (
     create_train_dataset, 
     create_valid_dataset, 
     create_train_loader, 
-    create_valid_loader
+    create_valid_loader,
+    create_remaining_indices_loader
 )
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 from torch.optim.lr_scheduler import MultiStepLR
@@ -52,7 +54,7 @@ import sys
 from tqdm import tqdm
 from collections import Counter
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-
+import random
 
 wandb.init(project="active_learning_server")
 plt.style.use('ggplot')
@@ -238,15 +240,30 @@ def set_dropout_mode(model, mode):
 
 
 
+
 class CustomSampler(Sampler):
-    def __init__(self, indices):
+    def __init__(self, indices, shuffle=False):
+        """
+        Custom Sampler that can optionally shuffle the indices.
+        
+        Args:
+            indices (list): List of indices to sample from.
+            shuffle (bool): Whether to shuffle the indices each epoch.
+        """
         self.indices = indices
+        self.shuffle = shuffle
 
     def __iter__(self):
-        return iter(self.indices[i] for i in range(len(self.indices)))
-    
+        if self.shuffle:
+            # Shuffle the indices before returning
+            return iter(random.sample(self.indices, len(self.indices)))
+        else:
+            # Return indices in the given order
+            return iter(self.indices)
+
     def __len__(self):
         return len(self.indices)
+
 
 
 if __name__ == '__main__':
@@ -350,7 +367,7 @@ if __name__ == '__main__':
         print(f"length of entropy_indices is {len(new_indices_to_add)}")
         print(f"Length of label_indices in epoch {epoch+1} is {len(label_indices)}")
         # print(f"Length of entropy_indices in epoch {epoch+1} is {len(entropy_indices)}")
-        custom_sampler_label_indices = CustomSampler(label_indices)
+        custom_sampler_label_indices = CustomSampler(label_indices, shuffle=True)
         label_indices_loader = create_train_loader(train_dataset , sampler=custom_sampler_label_indices)
 
         sampled_class_labels_1 = []
@@ -374,9 +391,15 @@ if __name__ == '__main__':
         remaining_indices = list(all_indices - set(label_indices))
         removed_indices = remaining_indices_before - len(remaining_indices)
         print(f"Remaining indices removed in epoch {epoch} is {removed_indices}")
-        custom_sampler_remaining_indices = CustomSampler(remaining_indices)
-        remaining_indices_loader = create_train_loader(train_dataset, sampler=custom_sampler_remaining_indices)
+        print(f"Length of remaining_indices in epoch {epoch+1} is {len(remaining_indices)}")
+        custom_sampler_remaining_indices = CustomSampler(remaining_indices, shuffle=False)
+        remaining_indices_loader = create_remaining_indices_loader(train_dataset,  sampler=custom_sampler_remaining_indices)
 
+
+        assert len(label_indices) + len(remaining_indices) == total_images , "Sum of label_indices and remaining_indices should be equal to total_images"
+
+        result = check_duplicates(label_indices, remaining_indices)
+        print("The duplictes are: ", result)
         # Training loop.
         for epoch in range(Active_learning_epochs):
             print(f"\nActive learning EPOCH {epoch+1} of {Active_learning_epochs}")
