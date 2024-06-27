@@ -2,12 +2,12 @@ import torch
 
 BATCH_SIZE = 64 # Increase / decrease according to GPU memeory.
 RESIZE_TO = 300 # Resize the image for training and transforms.
-NUM_EPOCHS = 25 # Number of epochs to train for.
+NUM_EPOCHS = 32 # Number of epochs to train for.
 NUM_WORKERS = 12 # Number of parallel workers for data loading.
-Active_learning_epochs = 1
+Active_learning_epochs = 32
 FORWARD_PASSES = 1
-top_N = 50
-least_N = 50
+top_N = 16
+least_N = 16
 labelled_sample = 200
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')

@@ -1,8 +1,7 @@
 # the model we are using is create_model_with_dropout and was created in the server
 #this model has dropout layers in the resnet block
-#this file will contain the duplicates as set is removed
-#we are thinking of making it all of set removing all the lists
-#this is random indices now uopdated
+#this code consists of confidence values addition to the remaining indices updatyd(27th June 2024 befor going to London)
+
 
 from config import (
     DEVICE, 
@@ -171,6 +170,10 @@ def enable_dropout(model):
         if module.__class__.__name__.startswith('Dropout'):
             module.train()
 
+import torch
+import numpy as np
+import sys
+
 def mc_dropout_ssd(data_loader, model, forward_passes):
     """Perform MC Dropout to estimate uncertainty in SSD model predictions, handle variable output sizes."""
     model.eval()
@@ -235,9 +238,70 @@ def mc_dropout_ssd(data_loader, model, forward_passes):
     # Sort entropies from highest to lowest
     entropies_per_image_sorted = sorted(entropies_per_image, key=lambda x: x[1], reverse=True)
 
-    print("The lenght of total entropies", len(entropies_per_image_sorted))
-
     return entropies_per_image_sorted
+
+
+import torch
+from tqdm import tqdm
+
+def predict_confidence_scores(model, dataloader, device='cuda'):
+    """
+    Predicts confidence scores for images in a DataLoader using an SSD model.
+
+    Parameters:
+    - model: The SSD model for inference.
+    - dataloader: A DataLoader providing batches of images and their indices.
+    - device: The device on which to perform inference ('cpu' or 'cuda').
+
+    Returns:
+    - results: A dictionary mapping DataLoader indices to their corresponding confidence scores.
+    """
+    print('Predicting Confidence Scores')
+    model.to(device)  # Move model to the specified device
+    model.eval()      # Set model to evaluation mode
+    
+    results = {}  # Dictionary to store the indices and confidence scores
+    
+    # Initialize tqdm progress bar
+    prog_bar = tqdm(dataloader, total=len(dataloader))
+    
+    with torch.no_grad():  # Disable gradient calculation for inference
+        for batch_idx, (images, indices) in enumerate(prog_bar):
+            images = list(image.to(device) for image in images)  # Move images to the specified device
+            
+            # Perform inference
+            outputs = model(images)
+            
+            # Print to inspect the structure of indices
+            #print(f"Batch {batch_idx} indices structure: {indices}")
+            
+            # Collect the results for each image in the batch
+            for i, idx in enumerate(indices):
+                # Assuming indices are already in a simple list or tensor form
+                if isinstance(idx, torch.Tensor):
+                    idx = idx.item()  # Convert tensor to scalar if necessary
+                elif isinstance(idx, dict):
+                    idx = idx['image_id'].item()  # Access specific key if it's a dict
+                
+                # For each image in the batch, gather the scores
+                confidence_scores = outputs[i]['scores'].cpu().tolist()  # Move to CPU and convert to list
+                results[idx] = confidence_scores
+                
+                # Verbose monitoring (similar to training function)
+                if idx in indices_to_check:
+                    print(f"Monitoring: Index {idx} corresponds to {index_2_name[idx]}")
+
+    return results
+
+# Example Usage:
+# Assuming 'your_dataloader' is your DataLoader instance
+# Assuming 'your_ssd_model' is your trained SSD model instance
+# Assuming 'indices_to_check' is a set of indices you want to monitor
+# Assuming 'index_2_name' is a dictionary mapping indices to image names
+
+# results = predict_confidence_scores(your_ssd_model, your_dataloader, device='cuda')
+
+
 
 
 
@@ -314,7 +378,7 @@ if __name__ == '__main__':
 
 
     scheduler = MultiStepLR(
-        optimizer=optimizer, milestones=[15], gamma=0.1, verbose=True
+        optimizer=optimizer, milestones=[10], gamma=0.1, verbose=True
     )
 
     #scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0)
@@ -341,24 +405,16 @@ if __name__ == '__main__':
     total_images = len(train_dataset)  # this is 1600
     num_images_to_label = labelled_sample
 
-    #label_indices = list(np.random.choice(total_images, num_images_to_label, replace=False))
-    #np.save('label_indices.npy', label_indices)     
+    label_indices = set(random.sample(range(total_images), num_images_to_label))
+    np.save('label_indices.npy', label_indices)     
     # THe length of label_indices is 500
 
     #remainig indices
-    label_indices = set(random.sample(range(total_images), num_images_to_label))
     all_indices = set(range(total_images))
-
-    # Find remaining indices as a set
     remaining_indices = all_indices - label_indices
-    print(f"lenght of remaining indices is before loop after subtracting {len(remaining_indices)}")
-    print(f"the remainig indices are {remaining_indices}")
-
-    # initla_duplicate_check = check_duplicates(label_indices, remaining_indices)
-    # print("The initial duplicates are: ", initla_duplicate_check)
     
-    # # THe length of remaining_indices is total_images minus the length of label_indices
-    # print(f"Length of remaining_indices is {len(remaining_indices)}")
+    # THe length of remaining_indices is total_images minus the length of label_indices
+    print(f"Length of remaining_indices is {len(remaining_indices)}")
 
     sampled_class_labels = []
     for idx in label_indices:
@@ -393,22 +449,18 @@ if __name__ == '__main__':
         print(f"\nEPOCH {epoch+1} of {NUM_EPOCHS}")
 
         # Ensure the indices are unique
-        print(f"the label indices are {label_indices}")
-        print(f"Length of label_indices before is {len(label_indices)}")
+        print("--------------------------------------")
+        print(f"Length of label_indices before adding new_indices is {len(label_indices)}")
         # Add the new indices to the existing label_indices
         label_indices.update(new_indices_to_add)
-        print("--------------------------------------")
-        print(f"Length of label_indices after is {len(label_indices)}" )
 
-        # Ensure the indices are unique
-        #label_indices = list(set(label_indices))
-        print(f"Length of label_indices after is {len(label_indices)}" )
+        print(f"Length of label_indices after adding new_indices is {len(label_indices)}" )
 
         print("--------------------------------------")
 
 
         # print(f"length of label_indices after duplicate removeal is {len(label_indices)}")
-        print(f"length of entropy_indices is {len(new_indices_to_add)}")
+        print(f"length of entropy_indices or new indices (loop_start) is {len(new_indices_to_add)}")
         print(f"Length of label_indices in epoch after {epoch+1} is {len(label_indices)}")
         # print(f"Length of entropy_indices in epoch {epoch+1} is {len(entropy_indices)}")
         custom_sampler_label_indices = CustomSampler(label_indices, shuffle=True)
@@ -429,24 +481,19 @@ if __name__ == '__main__':
 
 
 
-        remaining_indices = set(remaining_indices)
+
         # Step 5: Update remaining_indices by removing the new additions
-        #remaining_indices_before = len(remaining_indices)
-        #print(f"Length of remaining_indices before is {remaining_indices_before}")
-        # Find remaining indices again
-        remaining_indices = remaining_indices - label_indices
-        print(f"The remaining indices are: {remaining_indices}")
-        #removed_indices = remaining_indices_before - len(remaining_indices)
-        #print(f"Remaining indices removed in epoch {epoch} is {removed_indices}")
-        print(f"Length of remaining_indices in epoch after {epoch+1} is {len(remaining_indices)}")
+        remaining_indices_before = len(remaining_indices)
+        print(f"Length of remaining_indices before is {remaining_indices_before}")
+        remaining_indices = remaining_indices - label_indices    # we need to try subtracting with new_indices_to_add as well and check
         custom_sampler_remaining_indices = CustomSampler(remaining_indices, shuffle=False)
         remaining_indices_loader = create_remaining_indices_loader(train_dataset,  sampler=custom_sampler_remaining_indices)
 
 
         assert len(label_indices) + len(remaining_indices) == total_images , "Sum of label_indices and remaining_indices should be equal to total_images"
 
-        #result = check_duplicates(label_indices, remaining_indices)
-        #print("The duplictes are: ", result)
+        result = check_duplicates(label_indices, remaining_indices)
+        print("The duplictes are b/w label_indices and remaining_indices are: ", result)
         # Training loop.
         for epoch in range(Active_learning_epochs):
             print(f"\nActive learning EPOCH {epoch+1} of {Active_learning_epochs}")
@@ -495,7 +542,10 @@ if __name__ == '__main__':
         save_mAP(OUT_DIR, map_50_list, map_list)
         scheduler.step()
         start_mc = time.time()    
-        #entropies_per_image_sorted = mc_dropout_ssd(remaining_indices_loader, model, forward_passes=FORWARD_PASSES)
+        predictions = predict_confidence_scores(model,remaining_indices_loader,  device=DEVICE)
+        print(f"Length of entropies_per_image_sorted is {len(predictions)}")
+
+
         end_mc = time.time()
 
 
@@ -525,50 +575,39 @@ if __name__ == '__main__':
         top_N = top_N
         least_N = least_N
 
-        # Assuming `entropies_per_image_sorted` is a list of tuples (index, entropy)
+        # # Assuming `entropies_per_image_sorted` is a list of tuples (index, entropy)
 
-        # # Print Top N Entropy Values and Indices
-        # if len(entropies_per_image_sorted) >= top_N:
-        #     top_entropy = entropies_per_image_sorted[:top_N]
-        # else:
-        #     top_entropy = entropies_per_image_sorted
+        # Initialize an empty list to store all (index, highest_score) tuples
+        all_scores = []
 
-        # print("Top Entropy Image Indices and Values:")
-        # for index, entropy in top_entropy:
-        #     print(f"Index: {index}, Entropy: {entropy}")
+        # Iterate over the predictions dictionary and collect (index, highest_score) tuples
+        for idx, scores in predictions.items():
+            if scores:  # Ensure there are scores for this index
+                max_score = max(scores)  # Find the highest confidence score
+                all_scores.append((idx, max_score))  # Append (index, highest_score) tuple to list
 
-        # # Print Least N Entropy Values and Indices
-        # if len(entropies_per_image_sorted) >= least_N:
-        #     least_entropy = entropies_per_image_sorted[-least_N:]
-        # else:
-        #     least_entropy = entropies_per_image_sorted
+        # Sort the list of scores by highest_score in descending order
+        sorted_scores = sorted(all_scores, key=lambda x: x[1], reverse=True)
 
-        # print("Least Entropy Image Indices and Values:")
-        # for index, entropy in least_entropy:
-        #     print(f"Index: {index}, Entropy: {entropy}")
+        # Initialize a set to store top 10 indices
+        most_confident_indices = set()
 
+        # Add the indices of the top 10 predictions to the set
+        for idx, score in sorted_scores[:top_N]:
+            most_confident_indices.add(idx)
 
-        # # Use sets to store indices if order does not matter
-        # top_entropy_indices = {index for index, _ in top_entropy}
-        # least_entropy_indices = {index for index, _ in least_entropy}
+        # Initialize a set for least confident indices
+        least_confident_indices = set()
 
+        # Adding indices of the least confident predictions to least_confident_indices
+        for idx, score in sorted_scores[-least_N:]:
+            least_confident_indices.add(idx)
 
-        # # Reset model weights (assuming reset_weights is a defined function)
-        # #model.apply(reset_weights)
+        new_indices_to_add = most_confident_indices.union(least_confident_indices)
 
-        remaining_indices = list(remaining_indices)
-        top_entropy_indices = random.sample(remaining_indices, top_N)
-
-        # Combine the indices
-        new_indices_to_add = []
-        new_indices_to_add = top_entropy_indices
         print(f"Length of new_indices_to_add is {len(new_indices_to_add)}")
 
-        new_indices_to_add = set(new_indices_to_add)
-
-        result = check_duplicates(label_indices, new_indices_to_add)
-        print("The duplictes are: ", result)
-
+        result = check_duplicates(most_confident_indices, least_confident_indices)
 
 
 
